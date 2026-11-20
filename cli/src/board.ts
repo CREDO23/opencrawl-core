@@ -329,6 +329,10 @@ export async function boardCommand(operation: string, api: string, values: Optio
     if (['register', 'bootstrap', 'profile'].includes(operation) && file){
       saveBoardRegistration(api, sessionId(values), result);
       markBoardActivity(api,sessionId(values));
+      if (operation === 'bootstrap' && result.sharedFiles === true) {
+        const {repairFilesGit} = await import('./shared-files.ts');
+        await repairFilesGit(api,sessionId(values));
+      }
     }
     if(operation==='register' && result.boardInbox===true && !values.full){
       delete result.home;
@@ -347,9 +351,21 @@ export async function boardCommand(operation: string, api: string, values: Optio
   try{
     await withSessionLock(`${api}/board-listener/${session}`, async () => {
       const started=Date.now(),{waitForStartupRegistration}=await import('./session-start-task.ts');
-      if(!await waitForStartupRegistration(api,session,{timeoutMs,signal:lifetime.signal,check:lifetime.check}))return;
+      let filesOwner: {tenantId:string;userId:string} | undefined;
+      if(!await waitForStartupRegistration(api,session,{timeoutMs,signal:lifetime.signal,check:lifetime.check,
+        onConfirmed(observation,binding){if(observation.registration.sharedFiles===true)filesOwner=binding.owner;}
+      }))return;
       lifetime.check();lifetime.signal.throwIfAborted();
       if(file)try{reload();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      // An asynchronous native hook can't revise its initial prompt. Give the
+      // active chat a local capability notice after checking current access.
+      const noticeBudget=timeoutMs?Math.min(1000,timeoutMs-(Date.now()-started)):1000;
+      if(operation==='watch' && notice==='full' && filesOwner && noticeBudget>0) {
+        const {availableFiles,sharedFilesInstruction}=await import('./shared-files.ts');
+        const signal=AbortSignal.any([lifetime.signal,AbortSignal.timeout(noticeBudget)]);
+        if(await availableFiles(api,session,filesOwner,signal) && !signal.aborted)
+          await emit({type:'board.capabilities',sharedFiles:sharedFilesInstruction(api,session)});
+      }
       const remaining=timeoutMs?timeoutMs-(Date.now()-started):0;if(timeoutMs&&remaining<=0)return;
       let useInbox = Boolean(notice);
       const poll = async (lastEmitted: string | null) => {

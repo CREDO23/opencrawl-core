@@ -51,6 +51,7 @@ Usage: opencrawl <command> [--json] [--api <https-origin>]
   workload    Connect a cloud organization with one-time admin approval
   fetch       Read the indexed passage behind a search result
   collect     Install and manage Claude Code, Codex, Cursor, Antigravity and Grok Bot session capture
+  files       Show the network Git URL, configure Git sign-in, or open an agent clone
   board       Register, subscribe, publish and receive board deliveries
   skills      Install or inspect the OpenCrawl skill for detected agent clients
   session     Bootstrap a native SessionStart hook (session start --harness NAME)
@@ -262,6 +263,7 @@ export async function loginIdentity(api:string,options:{organizationId?:string;n
 const hasLocalFlag=(args:string[])=>args.some(arg=>arg==='--local'||arg.startsWith('--local='));
 
 export async function main(args = process.argv.slice(2)) {
+  if(args[0]==='files-credential')return (await import('./shared-files.ts')).sharedFileCredential(args.slice(1));
   if(args[0]==='privacy-hook')return (await import('./incognito.ts')).privacyHook(args.slice(1));
   if(args[0]==='incognito')return (await import('./incognito.ts')).privacyCommand(args.slice(1));
   if(args[0]==='plugin-hook'){try{return await main((await import('./setup/plugin-entrypoint.ts')).pluginInvocation(args.slice(1)));}catch{return 0;}}
@@ -311,11 +313,11 @@ export async function main(args = process.argv.slice(2)) {
     // memory upload while the foreground operation is inspecting local state.
     const localCollect=command==='collect'&&(['uninstall','titles'].includes(parsed.positionals[1]??'')||parsed.positionals[1]==='backfill'&&!parsed.values.yes);
     const manyFetch=command==='fetch'||command==='board'&&parsed.positionals[1]==='fetch';
-    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup','signup','history'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
+    if (!(command==='board'&&agentBoardCommands.has(parsed.positionals[1])) && parsed.positionals.length > (manyFetch ? command==='board'?42:41 : command === 'token' ? 3 : ['collect','search','board','skills','setup','signup','history','files'].includes(command) ? 2 : 1)) throw new CliError('INVALID_USAGE', 'Unexpected argument. Run opencrawl --help.', 64);
     informational=hasLocalFlag(args)||Boolean(parsed.values.help||parsed.values.version||command==='help'||command==='board'&&!parsed.positionals[1]);
     if (parsed.values.version) { emit({version}, version); return 0; }
     if (parsed.values.help || command === 'help' || command==='board'&&!parsed.positionals[1]) { const text=commandHelp(command,parsed.positionals[1])??help;emit({help:text}, text.trimEnd()); return 0; }
-    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
+    if (!['history','provision','signup','login', 'logout', 'whoami', 'status', 'setup', 'verify-installation', 'install', 'update', 'collect', 'search', 'fetch','board','skills','token','files'].includes(command)) throw new CliError('INVALID_USAGE', 'Unknown command. Run opencrawl --help.', 64);
     if (['login','token'].includes(command) && workspaceIdentityEnabled()) throw new CliError('WORKLOAD_ACCOUNT_ACTION', 'Workspace identity cannot manage human sign-ins or credentials. Use your personal machine for account setup.', 2);
     const organizationId = parsed.values.organization as string | undefined;
     if (organizationId !== undefined && (command !== 'login' || !/^org_[A-Za-z0-9]+$/.test(organizationId))) throw new CliError('INVALID_USAGE', 'Use login --organization with an organization ID such as org_123.', 64);
@@ -385,6 +387,23 @@ export async function main(args = process.argv.slice(2)) {
     }
     return await withEnvironmentTokenOrigin((parsed.values.api as string|undefined) ?? process.env.OPENCRAWL_API_URL, async () => {
     if(!pluginHookInvocation&&!organizationId&&command!=='skills'&&command!=='logout'&&!localCollect&&!parsed.values['dry-run']&&!localHook)memoryJob.current=scheduleMemoryRefresh();
+    if (command === 'files') {
+      const files = await import('./shared-files.ts');
+      if (parsed.positionals[1] === 'setup-git') {
+        const configured = await files.setupFilesGit(api);
+        emit(configured, 'Git credential helper configured for workspace repositories on '+api);
+        return 0;
+      }
+      if (parsed.positionals[1] === 'url') {
+        const url = await files.sharedFilesUrl(api);
+        emit({url}, url);
+        return 0;
+      }
+      if (parsed.positionals[1] !== 'open') throw new CliError('INVALID_USAGE', 'Use opencrawl files --help.', 64);
+      const data = await files.openSharedFiles(api, parsed.values.session);
+      emit(data, data.path);
+      return 0;
+    }
     if (command === 'board') {
       if(agentBoardCommands.has(parsed.positionals[1])){await agentBoardCommand(parsed.positionals[1],api,parsed.values,parsed.positionals.slice(2));return 0;}
       if(parsed.positionals[1]==='fetch'&&parsed.positionals.length>2){

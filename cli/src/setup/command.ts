@@ -1,3 +1,4 @@
+import {availableFiles,setupFilesGit} from '../shared-files.ts';
 import {readSession} from '../session.ts';
 import {removeCursorSetupHooks} from './cursor-native-hooks.ts';
 import {waitForSetup} from './wait.ts';
@@ -203,9 +204,28 @@ async function result(state:SetupState,launchHistory:typeof startHistoryWorker,i
  const activationGuidance=prepared?` After this plugin's native startup or reload has run, if its installation report is still prepared and CLI network access is normally authorized, run \`${formatSetupCommand(['setup','--yes','--api',state.scope.api,'--json'],command)}\` once, then re-read native installation_status. Preserve saved choices. If access is denied or unavailable, leave installation pending and continue native verification; do not repeat requests or bypass permissions.`:'';
  return {status:workerPending||state.pluginResults?.some(row=>['error','pending','prepared'].includes(row.status))?'needs_attention':'configured',scope:state.scope,installationId:state.installationId,selections:state.selections,captureMode:state.captureMode,nextAction,plugins:state.pluginResults,worker,history,humanTasks:unavailable?[]:await tasks(server,state,inspectHooks),historyBenefit,agentPrompt:unavailable?nextAction.instruction:`Continue OpenCrawl setup in this conversation. Use \`${formatSetupCommand([],command)}\` for every OpenCrawl command${process.platform==='win32'?' in PowerShell':''}. Start with \`${statusCommand}\` to read this machine's saved choices without network access. ${workerPending?workerGuidance+' Once supervision is configured, use':"Then use"} the installed plugin's native installation_status tool for each selected client and follow its returned human tasks. Use its verify_installation tool for the returned proof. Reuse my saved choices.${state.selections.plugins.cursor?' Open the deployment-specific plugin in a new Cursor session and follow its setup skill.':''}${activationGuidance} For clients with recording off (forward=false), complete the MCP connection without requiring a new session capture.`,nextStep:workerPending?workerGuidance:`Use \`${statusCommand}\` for saved local choices; server status comes from the native plugin. Installation is not proof that a session is searchable.`};
 }
-export function setupCommand(action:string,api:string,values:Values,deps:Dependencies={}):ReturnType<typeof executeSetup>{
+export function setupCommand(action:string,api:string,values:Values,deps:Dependencies={}){
  const interactive=deps.interactive??Boolean(process.stdin.isTTY&&process.stderr.isTTY&&!values.json);
- const run=()=>executeSetup(action,api,values,{...deps,interactive});
+ const run=async()=>{
+  const result=await executeSetup(action,api,values,{...deps,interactive});
+  if(action!=='run'&&action!=='apply')return result;
+  // Committed setup results carry installationId, even when recording is off.
+  if(!result||!('installationId' in result))return result;
+  const enabled=await availableFiles(api,undefined,result.scope,AbortSignal.timeout(10_000));
+  let warning:string|undefined;
+  if(!Bun.which('git',{PATH:process.env.PATH})){
+   warning='Install Git and rerun setup to enable workspace Git authentication.';
+  }else{
+   try{await setupFilesGit(api,deps.command);}
+   catch{warning='Could not register workspace Git authentication. Check that your OpenCrawl and global Git configurations are writable, then rerun setup.';}
+  }
+  // Setup already verified its deployment and principal. Installing this
+  // path-scoped helper is safe before rollout: Git must still discover and
+  // authenticate the exact workspace before the helper returns a credential.
+  if(!enabled)return result;
+  if(warning&&!values.json)process.stderr.write(warning+'\n');
+  return {...result,gitCredentials:warning?{status:'unavailable',message:warning}:{status:'configured'}};
+ };
  // Serialize changes to this profile's confirmed choices and installation.
  return action==='apply'&&values.yes===true||action==='run'&&(interactive||values.yes===true||!values.json)
   ?withSessionLock('setup:interactive-choices',run,0):run();
