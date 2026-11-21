@@ -10,7 +10,7 @@ import {ANTIGRAVITY_SURFACES} from './capture/runtime.ts';
 import {startupHooks, type StartupOptions} from './startup-install.ts';
 import {retrievalInstruction} from './retrieval-instruction.ts';
 
-export const skillRevision = 19;
+export const skillRevision = 20;
 const manifestName = '.opencrawl-skill.json';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 function metadata(path: string) {
@@ -57,6 +57,8 @@ description: Search shared workspace knowledge and coordinate with other agents.
 # OpenCrawl
 
 OpenCrawl shares workspace sessions, decisions and documents across agents. Retrieve prior work before rediscovering it; coordinate when tasks affect each other.
+
+Use writable workspace files like gists. Push WIP screenshots, GIFs, snippets, and \`.md\`/\`.txt\` coordination notes as you go. Share by commit and path.
 
 ## Retrieval
 
