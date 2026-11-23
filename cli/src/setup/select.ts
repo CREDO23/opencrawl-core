@@ -1,6 +1,6 @@
 import type {RecordingInstallState} from './plugins.ts';
-export type SelectionItem={id:string;label:string;selected:boolean;detail?:string;installState?:RecordingInstallState;disabled?:boolean};
-export type SelectionScreen={title:string;description:string;items:SelectionItem[];noneLabel:string;phase:1|2|3|4;emptyMessage?:string};
+export type SelectionItem={id:string;label:string;selected:boolean;autoUpdate?:boolean;detail?:string;installState?:RecordingInstallState;disabled?:boolean};
+export type SelectionScreen={title:string;description:string;items:SelectionItem[];noneLabel:string;phase:1|2|3;emptyMessage?:string};
 
 export function participationNotice(clients:readonly string[]):string|undefined{
  const claude=clients.includes('claude-code'),codex=clients.includes('codex');
