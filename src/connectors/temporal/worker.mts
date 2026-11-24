@@ -8,6 +8,7 @@ export {connectorMaintenance, type ConnectorMaintenance, type ConnectorJob, type
 import {fileURLToPath} from 'node:url';
 import {writeFile} from 'node:fs/promises';
 import {createConnectorPipeline} from '../pipeline.mjs';
+export {buildCountWorkflows,createCountWorker} from './count-worker.mjs';
 import {SourcePaginationError, assertSourcePaginationInput, assertSourcePaginationPage} from '../workflow.mjs';
 
 export async function buildConnectorWorkflows(path: string) {
