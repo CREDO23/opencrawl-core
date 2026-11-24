@@ -18,7 +18,8 @@ import {reconcileHookEntries, reconcileHookGroups} from '../hook-config.ts';
 import {installCaptureDaemon,uninstallCaptureDaemon} from './daemon-service.ts';
 import {defaultClaudeDesktopSessionsRoot} from './desktop-history.ts';
 import {establishForwardBoundaries,hasUnverifiedForwardBoundaries} from '../setup/watermarks.ts';
-import {establishCursorForwardBoundaries} from '../setup/cursor-watermarks.ts';
+import {establishCursorForwardBoundaries,establishCursorStoreBoundaries} from '../setup/cursor-watermarks.ts';
+import {defaultCursorEditorRoot} from './cursor-store.ts';
 const marker='OpenCrawl session capture';
 function readJson(file:string){return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{};}
 /** Rewrite another program's JSON config the way people keep it: their
@@ -211,6 +212,7 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
       'grok-bot':!harnesses.includes('grok-bot')&&previous?.roots['grok-bot']||join(home,'.cursor'),
       antigravity:!harnesses.includes('antigravity')&&previous?.roots.antigravity||process.env.ANTIGRAVITY_HOME||join(home,'.gemini'),
       ...(harnesses.includes('devin')||previous?.roots.devin?{devin:previous?.roots.devin||join(home,'.devin')}:{})},
+    cursorEditorRoot:previous?.cursorEditorRoot??defaultCursorEditorRoot(home),
     claudeDesktopSessionsRoot:previous?.claudeDesktopSessionsRoot??defaultClaudeDesktopSessionsRoot(home),command};
   const enrolled=config.harnesses!;
   const removed=selectionMode==='replace'?(previous?.harnesses??[]).filter(h=>!enrolled.includes(h)):[];
@@ -239,7 +241,14 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
   // The worker does not take the configuration lock. Its old consent remains
   // authoritative until every newly selected source has a durable boundary.
   const needsBoundary=(h:Harness)=>!previous||previous.disabled||changed||previous.authPending||!(previous.harnesses??[]).includes(h)||previous.roots[h]!==config.roots[h];
-  if(enrolled.includes('cursor')&&needsBoundary('cursor'))await establishCursorForwardBoundaries(config,previous);
+  // A forward selection opens a new discovery interval. Retain the cutoff
+  // across ordinary setup repairs, never across accounts or reenrollment.
+  const selectedAt=Date.now();
+  config.discoverySince=Object.fromEntries(enrolled.map(h=>[h,needsBoundary(h)?selectedAt:previous?.discoverySince?.[h]??selectedAt]));
+  if(enrolled.includes('cursor')&&needsBoundary('cursor')){
+    await establishCursorForwardBoundaries(config,previous);
+    if(daemon||stagedDaemon||captureDaemonEnabled(config))await establishCursorStoreBoundaries(config,previous);
+  }
   if(selectionMode==='replace'){
     establishForwardBoundaries(config,enrolled.filter(h=>readsTranscript(h)&&needsBoundary(h)) as TranscriptHarness[]);
     // Explicit setup/resume repairs only ambiguous, already-consented boundaries.
@@ -268,7 +277,8 @@ export async function installCapture(api:string,{background=false,deferAuth=fals
     throw error;
   }
   const backgroundStatus='harness-managed';
-  const steps=hookOwnership==='plugin'?['Recording follows your saved choices and the hooks in each selected native plugin. Complete native plugin trust and MCP sign-in with your agent.']:[
+  const daemonRecording=captureDaemonEnabled(config)||stagedDaemon||daemon;
+  const steps=hookOwnership==='plugin'?[daemonRecording?'The running daemon records selected Codex, Claude Code, Antigravity and Cursor chats from their native files. Complete plugin sign-in and trust for other plugin features.':'Recording follows your saved choices and the hooks in each selected native plugin. Complete native plugin trust and MCP sign-in with your agent.']:[
     ...(harnesses.some(readsTranscript)?[process.env.CLAUDE_CODE_REMOTE==='true'?'Cloud hooks installed. Run a new message and check collect status for a stored receipt. Configure the environment setup script for future sessions.':[...(harnesses.includes('codex')?['Review OpenCrawl hooks in Codex /hooks (or desktop Settings > Hooks), trust new or changed definitions you approve, and start a new session. collect status checks native hook readiness.']:[]),...(harnesses.includes('claude-code')?['Restart existing Claude sessions if hooks have not reloaded.']:[])].join(' ')]:[]),
     // An agent that ran the plain command on a Bot's computer reads this and corrects itself.
     ...(absent&&!deferAuth&&!enrolled.includes('grok-bot')&&process.env.CLAUDE_CODE_REMOTE!=='true'?['Neither Claude Code nor Codex was found on this machine. If it is a Grok Bot cloud computer, capture it with opencrawl collect install --yes --harness grok-bot.']:[]),

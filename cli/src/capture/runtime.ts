@@ -17,7 +17,7 @@ import {environmentToken} from '../environment-token.ts';
 import {workspaceIdentityEnabled, workspaceToken} from '../workspace-identity.ts';
 import {parseRecord, detectOrigin, finalizeEventIdentity, hash, readsTranscript, HARNESSES, type Harness, type TranscriptHarness} from './parse.ts';
 import {clientAppResolver} from './client-app.ts';
-import {cursorSession,cursorTranscript,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
+import {cursorSession,cursorTranscript,cursorTranscriptBoundary,cursorMessage,cursorThoughtDuplicate,cursorThoughtState} from './cursor.ts';
 import {grokBotEvents, grokBotSession, grokBotTitleEvent, grokBotUnsupported, GROK_BOT_BOUNDARIES, GROK_BOT_MAX_HOOK_BYTES} from './grok-bot.ts';
 import {devinEvents,devinOverflow,devinSession,devinUnsupported,DEVIN_MAX_HOOK_BYTES} from './devin.ts';
 import {isClaudeDesktopTranscript,desktopNativeMessageIds} from './desktop-history.ts';
@@ -25,6 +25,7 @@ import {captureExcluded, type CaptureExclusions} from './policy.ts';
 import {localCodexHookReview,codexHookReviewMessage,type CodexHookReview} from './codex-hooks.ts';
 import {codexTitle, codexTitleSignature} from './titles.ts';
 import {codexNativeSession} from './codex-session.ts';
+import {cursorStoreRecords,cursorStoreWorkspace,defaultCursorEditorRoot} from './cursor-store.ts';
 import {redactValue,redactAttachment,MAX_REDACTION_DEPTH} from './redact.ts';
 import {replicasAttribution,replicasEventAttribution,replicasTitle,type ReplicasTitle} from './replicas.ts';
 import {enqueueLiveBatch,pendingLiveSince,isPendingLive,recoverLiveSeals,sealLiveBatches} from './live-batches.ts';
@@ -39,8 +40,16 @@ export const captureDir = () => join(configDir(),'capture');
 const read = (p:string, fallback:any=null) => {try{return JSON.parse(readFileSync(p,'utf8'));}catch(e:any){if(e.code==='ENOENT')return fallback;throw e;}};
 /** Bump when installed hook entries change so the next hook rewrites existing installs. */
 export const HOOK_MODE='native-v5';
-export type CaptureConfig = {disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
-export const readCaptureConfig = ():CaptureConfig|null => read(join(captureDir(),'config.json'));
+export type CaptureConfig = {cursorEditorRoot?:string,discoverySince?:Partial<Record<Harness,number>>,disabled?:boolean,authPending?:boolean,captureWorker?:'daemon-v1',daemonRequested?:{backgroundStartup:boolean},backgroundStartup?:boolean,claudeCapture?:'daemon-v1',exclusions?:CaptureExclusions,schemaVersion:1,hookOwnership?:'global'|'plugin',hookMode?:typeof HOOK_MODE|'native-v4'|'managed-v3'|'managed-v2'|'managed',harnesses?:Harness[],historyHarnesses?:TranscriptHarness[],api:string,installationId:string,owner:{tenantId:string,userId:string,name?:string,email?:string},installedAt:string,roots:{'claude-code':string,codex:string,'grok-bot'?:string,cursor?:string,antigravity?:string,devin?:string},claudeDesktopSessionsRoot?:string,command:string[]};
+export function readCaptureConfig():CaptureConfig|null {
+  const config:CaptureConfig|null=read(join(captureDir(),'config.json'));
+  // Older native installs did not store the editor path. Infer only a
+  // standard Cursor profile; a custom root must never open another user's DB.
+  if(config&&!config.cursorEditorRoot&&config.roots?.cursor&&basename(config.roots.cursor)==='.cursor'){
+    config.cursorEditorRoot=defaultCursorEditorRoot(dirname(config.roots.cursor));
+  }
+  return config;
+}
 /** claudeCapture is accepted only for the first opt-in daemon pilot. */
 export const captureDaemonEnabled=(config:CaptureConfig|null=readCaptureConfig())=>config?.captureWorker==='daemon-v1'||config?.claudeCapture==='daemon-v1';
 /** Every selected harness below has a native event inbox adapter. */
@@ -402,7 +411,7 @@ function leadingCodexRecord(fd: number, size: number, required: boolean) {
 }
 
 /** The cursor advances only after its records and attachment bytes are durably spooled. */
-export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:Pick<HistoryFile,'bytes'|'ino'|'mtimeMs'|'scope'>,{sessionScoped=false,sessionPath}:{sessionScoped?:boolean,sessionPath?:string}={}) {
+export async function captureTranscript(config:CaptureConfig,harness:TranscriptHarness,file:string,hook:any={},reconcileHistory=false,onEnqueued?:()=>Promise<void>,approvedFile?:Pick<HistoryFile,'bytes'|'ino'|'mtimeMs'|'scope'>,{sessionScoped=false,sessionPath,discoverySince,parentSessionId}:{sessionScoped?:boolean,sessionPath?:string,discoverySince?:number,parentSessionId?:string}={}) {
   return withSessionLock('capture:spool',async()=>{
   if(readCaptureConfig()?.disabled)throw new CliError('CAPTURE_DISABLED','Capture is uninstalled. Reinstall before importing transcripts.');
   ensureDirectories();
@@ -472,6 +481,7 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
       ? {harness,sessionId:agyHook?.sessionId??agyPath.sessionId,origin:agyPath.origin,originEvidence:agyPath.originEvidence,parentSessionId:null,sourcePath:path,...(agyHook?.cwd?{cwd:agyHook.cwd}:{})}
       : {harness,sessionId:hook.session_id,origin:'unknown',originEvidence:null,parentSessionId:null,sourcePath:path});
     if(agyHook?.cwd&&!meta.cwd)meta={...meta,cwd:agyHook.cwd};
+    if(scoped&&parentSessionId)meta.parentSessionId=parentSessionId;
     if(agyPath&&(!meta.origin||meta.origin==='unknown'))meta={...meta,origin:agyPath.origin,originEvidence:agyPath.originEvidence};
     const expectedSession=scoped?(scoped.agentId?scoped.sessionId+':'+scoped.agentId:scoped.sessionId):null;
     let codexIdentityRead=Boolean(offset>0&&old.meta?.sessionId);
@@ -595,7 +605,13 @@ export async function captureTranscript(config:CaptureConfig,harness:TranscriptH
             const priorMeta={...meta};
             if(!desktopAudit||auditMessage)metadata(record);
             if(priorMeta.sessionId && (meta.sessionId!==priorMeta.sessionId || meta.cwd!==priorMeta.cwd || meta.clientApp!==priorMeta.clientApp)){await spool({...priorMeta,captureMode:reconcileHistory?'history':'live'},events.splice(0),attachments.splice(0));eventBytes=0;}
-            const parsed=auditMessage?parseRecord(harness,record,position):null;
+            let parsed=auditMessage?parseRecord(harness,record,position):null;
+            if(parsed&&discoverySince!==undefined){
+              const time=typeof parsed.timestamp==='string'?Date.parse(parsed.timestamp):NaN;
+              // Touching/restoring an inactive file does not grant history
+              // consent. Undated bytes need a new file or an established cursor.
+              if(Number.isFinite(time)?time<discoverySince:!(old.forwardBoundary||old.offset>0&&!reset||source.birthtimeMs>=discoverySince))parsed=null;
+            }
             if(parsed?.kind==='session_title') {
               const platform=approvedFile?.scope?undefined:await platformTitle(config,meta);
               if(platform)parsed.data={title:platform.title,titleType:'custom'};
@@ -782,8 +798,7 @@ export async function captureHook(harness:Harness,event:any) {
 
 export type CaptureHookNotice={id:string,at:string,sequence?:number,harness:Harness,event:any};
 
-/** Shared Cursor conversion and occurrence deduplication. The daemon calls this
- * only with the exact session and transcript supplied by a native hook. */
+/** Merge the same session's hook, JSONL and committed native store events. */
 export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHookNotice,transcriptOnly=false) {
   ensureDirectories();
   const session=cursorSession(notice.event);
@@ -796,7 +811,13 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
   if(session.origin!=='unknown')state.origin=session.origin;
   const meta={harness:'cursor',sessionId:session.sessionId,cwd:session.cwd,origin:state.origin??session.origin,originEvidence:session.originEvidence,parentSessionId:session.parentSessionId,captureMode:'live',harnessVersion:session.version};
   if(captureExcluded(readCaptureConfig()??config,meta))return;
-  const messages=(event:any,source:'hooks'|'transcript')=>{
+  const messages=(event:any,source:'hooks'|'transcript'|'store')=>{
+    if((event.kind==='tool_call'||event.kind==='tool_result')&&event.nativeId){
+      const key=hash(JSON.stringify([event.kind,event.nativeId]));
+      state.tools??={};
+      if(state.tools[key])return null;
+      state.tools[key]=true;
+    }
     let signature;
     if(event.kind==='message') {
       event.data=cursorMessage(event.data);signature=[event.data.role,event.data.content];
@@ -810,6 +831,7 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
       signature=['assistant',[{type:'text',text}]];
     } else return event;
     const key=hash(JSON.stringify(signature));
+    state[source]??={};
     const count=(state[source][key]??0)+1;state[source][key]=count;
     if(count<=(state.emitted[key]??0))return null;
     state.emitted[key]=count;
@@ -823,9 +845,49 @@ export async function captureCursorNotice(config:CaptureConfig,notice:CaptureHoo
   };
   const file=notice.event.transcript_path;
   const scanStart=new Date().toISOString(),policy=confirmedPermission(read(recordingPath(config)) as RecordingPermission|undefined);
+  if(transcriptOnly && typeof file==='string' && ['store.db','state.vscdb'].includes(basename(file))){
+    const editor=basename(file)==='state.vscdb',root=editor?config.cursorEditorRoot:harnessRoot(config,'cursor');
+    if(!root)throw new CliError('CAPTURE_CURSOR_STORE_INVALID','No Cursor editor storage is configured');
+    if(!editor)meta.cwd=cursorStoreWorkspace(root,session.sessionId,file);
+    meta.origin=editor?'desktop':'cli';meta.originEvidence=editor?'Cursor editor native chat database':'Cursor CLI native chat database';
+    if(captureExcluded(readCaptureConfig()??config,meta))return;
+    const since=notice.event.discoverySince;
+    if(!Number.isFinite(since))throw new CliError('CAPTURE_CURSOR_BOUNDARY_UNKNOWN','Missing forward recording boundary for Cursor chat database');
+    for(;;){
+      const current=readCaptureConfig();
+      if(!current||current.disabled||current.authPending||!current.harnesses?.includes('cursor')||current.discoverySince?.cursor!==config.discoverySince?.cursor||current.api!==config.api||current.installationId!==config.installationId||current.owner.userId!==config.owner.userId||current.owner.tenantId!==config.owner.tenantId||captureExcluded(current,meta))return;
+      const same=state.storeSince===since;
+      const store=cursorStoreRecords(root,session.sessionId,file,since,same?state.storeCursor:undefined);
+      if(!store)return;
+      // Persist the source interval and stable occurrence order before enqueue,
+      // so a crash between enqueue and checkpoint reproduces the same events.
+      if(!same||state.storePending?.head!==store.cursor.head){
+        state.storeSince=since;
+        if(!same){delete state.storeCursor;delete state.storeScannedAt;}
+        state.storePending={head:store.cursor.head,at:notice.at,sequence:notice.sequence,observed:new Date().toISOString(),
+          from:state.storeScannedAt??new Date(Math.max(since,store.createdAt)).toISOString()};
+        atomicJson(stateFile,state);
+      }
+      const pending=state.storePending;
+      if(allowedTime(policy,pending.observed,pending.from))for(const [index,record] of store.records.entries()){
+        const event=messages({...record,id:hash(JSON.stringify(['cursor-store',session.sessionId,record.kind,record.nativeId])),
+          sequence:pending.sequence+index,timestamp:pending.at,sourceTime:pending.observed,sourceTimeFrom:pending.from,parentId:null,turnId:null,agentId:null},'store');
+        if(event)events.push(event);
+      }
+      pending.sequence+=store.records.length;
+      state.storeCursor=store.cursor;
+      if(!store.cursor.more){state.storeScannedAt=pending.observed;delete state.storePending;}
+      commit();
+      if(!store.cursor.more)return;
+      await yieldToOwner();
+    }
+  }
   // Text transcript metadata is not the native JSONL fallback. Keep the
   // authoritative content hooks working without opening referenced text.
   if(typeof file==='string'&&file.endsWith('.jsonl')&&existsSync(file)) {
+    if(transcriptOnly&&Number.isFinite(notice.event.discoverySince)&&state.ino===undefined&&statSync(file).birthtimeMs<notice.event.discoverySince){
+      Object.assign(state,cursorTranscriptBoundary(harnessRoot(config,'cursor'),session.sessionId,file),{forwardBoundary:true});
+    }
     const transcriptState={offset:state.offset,ino:state.ino,checkpoint:state.checkpoint,identity:state.identity};
     for(const record of cursorTranscript(harnessRoot(config,'cursor'),session.sessionId,file,transcriptState.offset,transcriptState.ino,transcriptState.checkpoint,{forwardBoundary:state.forwardBoundary===true,skipPartial:state.skipPartial===true,identity:transcriptState.identity})) {
       if(record.forwardRebased){
@@ -1480,7 +1542,7 @@ export function captureAttentionNotice(now=Date.now()):string|null {
 export function captureStatus(nativeReview?:CodexHookReview) {
   const config=readCaptureConfig(),daemonIngress=daemonIngressStatus(),pendingLegacyHooks=existsSync(join(captureDir(),'notices'))?noticeNames().length:0;
   const codexReview=nativeReview??(config?localCodexHookReview(config.roots.codex):{state:'not_applicable' as const,total:0,pending:0,disabled:0});
-  const review=codexHookReviewMessage(codexReview);
+  const review=captureDaemonEnabled(config)?null:codexHookReviewMessage(codexReview);
   return {installed:Boolean(config&&!config.disabled),api:config?.api,owner:config?.authPending?null:config?.owner,authenticationPending:Boolean(config?.authPending),installationId:config?.installationId,
     worker:captureDaemonEnabled(config)?{supervision:read(join(captureDir(),'daemon/service.json')),lastObserved:read(join(captureDir(),'daemon/status.json')),uploadRetry:read(join(captureDir(),'daemon/retry.json')),startupRetry:read(join(captureDir(),'daemon/startup-retry.json'))}:null,
     exclusions:config?.exclusions??{projects:[],sessions:[]},
