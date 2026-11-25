@@ -45,13 +45,18 @@
 .usage-query-row:hover { background: var(--surface-subtle); }
 .usage-query-row [aria-expanded=true] svg { transform: rotate(180deg); }
 .usage-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-agent { display: inline-flex; position: relative; align-items: center; vertical-align: middle; }
+.usage-agent { display: inline-flex; align-items: center; vertical-align: middle; }
 .usage-agent .oc-agent-avatar { width: 24px; height: 24px; margin: 0; }
-.usage-agent:is(:hover,:focus-visible)::after { content: attr(data-tooltip); position: absolute; left: 100%; z-index: 2; white-space: nowrap; padding: var(--space-1) var(--space-2); background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-control); }
 .usage-query-table .usage-query-detail { white-space: normal; overflow-wrap: anywhere; text-align: left; color: var(--muted); }
 .usage-query-detail p { white-space: pre-wrap; color: var(--text); }
-.usage-history-dialog { width: min(720px,94vw); }
-.usage-history-dialog .oc-dialog-body { max-height: 65dvh; overflow: auto; }
+.usage-query-byline { margin-block: var(--space-1); font-size: var(--text-xs); }
+.usage-query-history table { table-layout: fixed; min-width: 43rem; }
+.usage-query-history :is(td, th) { text-align: left; overflow-wrap: anywhere; }
+.usage-query-history th:first-child { width: 2.5rem; }
+.usage-query-history th:nth-child(3) { width: 23%; }
+.usage-query-history th:nth-child(4) { width: 10rem; }
+.usage-query-history th:last-child { width: 7rem; }
+.usage-history-query { white-space: pre-wrap; }
 @container (max-width: 649px) {
   .usage-overview .report-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .usage-overview .report-metric:last-child { grid-column: 1/-1; }
@@ -72,10 +77,8 @@
 }
 
 .usage-overview .report-metric dt { color: var(--text); font-weight: 550; }
-.usage-overview .usage-pane:first-child .report-bar { fill: var(--quiet); }
-.usage-token-pane .report-bar,.usage-token-pane .report-trend-line { fill: var(--accent); }
+.usage-overview .report-bar { fill: var(--accent); }
 .usage-token-pane .report-trend-line { fill: none; stroke: var(--accent); }
 .usage-query-table thead th { font-weight: 500; text-transform: none; letter-spacing: normal; }
 .usage-query-table .usage-query { font-weight: 500; }
-.usage-history-dialog .usage-query-table :is(th,td):nth-child(3) { width: clamp(90px,25vw,176px); white-space: normal; }
 .usage-view-all { display: inline-flex; align-items: center; gap: var(--space-1); }
