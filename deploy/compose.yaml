@@ -82,6 +82,7 @@ services:
   app-state-ready:
     <<: *runtime
     restart: "no"
+    environment: {<<: *env, OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW: "${OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW:-}"}
     command: ["node", "deploy/application-state-init.mjs"]
     depends_on: {database-ready: {condition: service_completed_successfully}, s3: {condition: service_started}}
 

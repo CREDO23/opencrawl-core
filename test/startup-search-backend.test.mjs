@@ -80,10 +80,28 @@ test('deployment startup refuses to replace an existing OpenSearch profile or co
 test('deployment builds its shared image once before starting services',t=>{
   const f=fixture(t);assert.equal(f.deploy(['--no-airbyte']).status,0);f.env.TEST_REJECT_SHARED_BUILD='1';
   const result=f.deploy(['--no-airbyte','--scale','worker=2','--no-recreate','app','worker']);assert.equal(result.status,0,result.stderr);
-  assert.deepEqual(f.commands().slice(0,2),[
+  assert.deepEqual(f.commands().filter(args=>args[1]!=='config').slice(0,2),[
     ['compose','build','--build-arg','OPENCRAWL_SOURCE_REVISION='+'0'.repeat(39)+'1','app'],
     ['compose','up','-d','--no-build','--wait','--wait-timeout','600','--scale','worker=2','--no-recreate','app','worker'],
   ]);
+});
+
+test('bundled credential bootstrap checks the effective named volume before creating it',t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.root,'bin/docker'),`#!${process.execPath}
+if(process.argv.includes('config'))process.stdout.write(process.env.TEST_MODEL);
+else if(process.argv.includes('ls')){if(process.env.TEST_DENIED)process.exit(1);process.stdout.write(process.env.TEST_EXISTING);}
+`,{mode:0o755});
+  const model=['name: opencrawl','services:','  s3:','    command:','      - mini','      - -dir=/data','      - -bucket=opencrawl',
+    '    image: chrislusf/seaweedfs:4.52','    volumes:','      - type: volume','        source: s3','        target: /data',
+    'volumes:','  s3:','    name: opencrawl_s3'].join('\n');
+  const probe=(overrides={})=>spawnSync('/bin/sh',[join(f.root,'deploy/up.sh'),'--check-fresh-credential-volume'],
+    {encoding:'utf8',env:{...f.env,TEST_MODEL:model,TEST_EXISTING:'',...overrides}}).stdout;
+  assert.equal(probe(),'1');
+  assert.equal(probe({TEST_EXISTING:'opencrawl_s3'}),'');
+  assert.equal(probe({TEST_DENIED:'1'}),'');
+  assert.equal(probe({TEST_MODEL:model.replace('type: volume','type: bind')}),'');
+  assert.equal(probe({TEST_MODEL:model.replace('name: opencrawl_s3','name: retained_archive')}),'');
 });
 
 test('a failed shared-image build never starts services',t=>{

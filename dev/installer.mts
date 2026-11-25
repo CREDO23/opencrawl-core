@@ -77,7 +77,8 @@ function save(){privateFile(stateFile,state);}
 const node=state.project+'-control-plane',kubeconfig=join(stateDir,'kubeconfig'),envFile=join(stateDir,'compose.env'),override=join(stateDir,'compose.json');
 const sqlite=state.searchBackend==='sqlite';
 
-const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),'-f',override,...args],options);
+const composeArgs=['compose','--project-name',state.project,'--env-file',envFile,'-f',join(root,'deploy/compose.yaml'),...(sqlite?['-f',join(root,'deploy/compose.sqlite.yaml')]:[]),'-f',override];
+const compose=(args:string[],options:Parameters<typeof run>[2]={})=>run('docker',[...composeArgs,...args],options);
 const kubectl=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'kubectl'),['--kubeconfig',kubeconfig,'--cache-dir',join(stateDir,'kube-cache'),'--context','kind-'+state.project,...args],options);
 const helm=(args:string[],options:Parameters<typeof run>[2]={})=>run(join(bin,'helm'),['--kubeconfig',kubeconfig,'--kube-context','kind-'+state.project,...args],options);
 function ownedNode(){
@@ -190,6 +191,7 @@ async function up(){
   }
   writeCompose();
   console.log('Starting the normal storage and workflow dependencies...');
+  process.env.OPENCRAWL_BUNDLED_CREDENTIAL_VOLUME_NEW=run('/bin/sh',[join(root,'deploy/up.sh'),'--check-fresh-credential-volume',...composeArgs.slice(1)],{capture:true});
   compose(['up','-d','--wait','--wait-timeout','600','s3',...(sqlite?[]:['opensearch']),'temporal',...(airbyteEnabled?['fixture']:[])]);
   console.log('Building the shared product runtime and React console...');compose(['build','--build-arg','OPENCRAWL_SOURCE_REVISION='+run('git',['rev-parse','HEAD'],{capture:true}).trim(),'app']);
   if(airbyteEnabled)await startAirbyte(existing);
