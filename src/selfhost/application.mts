@@ -30,7 +30,7 @@ import {singleOrganizationIdentity} from '../identity/single-organization.mjs';
 import {activeMemberships,singleOrganizationPrincipal} from '../identity/principal.mjs';
 import {mcpMetadata} from '../identity/mcp.mjs';
 import {teamService,isAdmin} from '../identity/team.mjs';
-import {roleWriteGuard} from '../identity/role-write.mjs';
+import type {selfhostTeamWrites} from './team-writes.mjs';
 import {createOnboardingStatus,type OnboardingRepository} from '../onboarding-status.mjs';
 import {deriveOnboarding,hasCompletedOnboarding} from '../onboarding-state.mjs';
 import {createOnboardingObserver} from '../application/onboarding-observer.mjs';
@@ -78,6 +78,7 @@ export interface SelfhostApplicationOptions {
   log?: Log;
   contextSuggestions?:ContextSuggestionsExtension;
   settings:SelfhostSettings;boardState:ApplicationState;store:Store;eventIdentities?:EventIdentityStore;prefix:string;identity:LocalIdentity;
+  teamWrite?:ReturnType<typeof selfhostTeamWrites>['write'];
   setupState?:SetupState;
   onboardingRepository?:OnboardingRepository;
   sharedFiles?:SharedFilesStore;
@@ -96,7 +97,7 @@ export interface SelfhostApplicationOptions {
   readAsset?:(file:string)=>Promise<string|Buffer>;
 }
 /** Full product composition for one self-hosted organization with its own accounts. */
-export function selfhostApplication({settings,store,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasRepository,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
+export function selfhostApplication({settings,store,teamWrite,boardState,setupState,sharedFiles,filesLimits,recording,eventIdentities,prefix,identity,integrations,replicasRepository,replicasImport,devinRecording,providers={},connectors,oauth,sourceCredentials=oauth,connectorSettings,scheduleSessionDeletion,scheduleSessionIndexing,workloadIdentity,workloadIdentityKey,
   onboardingRepository,devinState,devinIdentityKey,usageActivity,contextSuggestions={},
   readAsset=file=>readFile(new URL('../../../'+file,import.meta.url)),
   log=(event, detail)=>console.error(JSON.stringify({event, ...detail, message:String(detail.message || '').slice(0,300)})),
@@ -126,7 +127,7 @@ export function selfhostApplication({settings,store,boardState,setupState,shared
     const result=await accounts.identifyToken(...args);
     if(result.status===200)admitActivity(result.principal);
     return result;
-  },organizations=teamService(directory,roleWriteGuard(store,prefix),credentials.revokeAll);
+  },organizations=teamService(directory,undefined,undefined,teamWrite);
   const devin=devinState && devinRuntime({repository:devinState,audience:settings.url,key:devinIdentityKey,tenantId:settings.organizationId,isAdmin:canManageWorkloads,
     startup:setupState&&recording?{setup:setupState,recording,store,prefix}:undefined,
     authenticateAdmin:async req=>{
