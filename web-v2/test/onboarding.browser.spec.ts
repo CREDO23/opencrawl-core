@@ -744,31 +744,10 @@ for (const step of ['sources','invite']) test(`members skip the legacy ${step} o
   expect(reads).toBe(0);
 });
 
-test('an integration card opens the exact account and rechecks its availability on reload', async ({page}) => {
-  const path = '/integrations/fixtureboard/int_' + 'a'.repeat(26);
-  const otherPath = '/integrations/fixtureboard/int_' + 'b'.repeat(26);
-  const account = {provider:'github', name:'GitHub', account:'Engineering', state:'synced', scope:'team', auth:'oauth', synced:3, connectionPath:path,otherConnections:[{account:'Design',path:otherPath}]};
-  await page.route('**/api/console/sources', route => route.fulfill({json:{items:[account]}}));
-  let available = true;
-  await page.route('**/api/console/sources/connection', route => {
-    const requested=route.request().postDataJSON().path;
-    if(requested===otherPath)return route.fulfill({json:{...account,account:'Design',otherConnections:[]}});
-    expect(requested).toBe(path);
-    return available ? route.fulfill({json:account}) : route.fulfill({status:404,json:{error:'Unavailable'}});
-  });
+test('multi-account integration cards identify their account without a detail link', async ({page}) => {
+  const account = {provider:'github', name:'GitHub', account:'Engineering', canAddAccount:true, integrationId:'int_'+'a'.repeat(26), state:'synced', scope:'team', auth:'oauth', synced:3};
+  await page.route('**/api/console/sources', route=>route.fulfill({json:{items:[account]}}));
   await page.goto('/integrations-fixture');
-  const link = page.getByRole('link',{name:'Open GitHub connection Engineering'});
-  await expect(link).toHaveAttribute('href',path);
-  await link.click();
-  await expect(page.getByRole('heading',{name:'Engineering'})).toBeVisible();
-  await page.getByRole('link',{name:'Design'}).click();
-  await expect(page.getByRole('heading',{name:'Design'})).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(otherPath+'$'));
-  await page.goBack();
-  await page.reload();
-  await expect(page.getByRole('heading',{name:'Engineering'})).toBeVisible();
-  available = false;
-  await page.reload();
-  await expect(page.getByText('Connection unavailable',{exact:true})).toBeVisible();
-  await expect(page.getByRole('heading',{name:'Engineering'})).toHaveCount(0);
+  await expect(page.getByRole('article',{name:'GitHub',exact:true}).getByText('Engineering',{exact:true})).toBeVisible();
+  await expect(page.locator('a[href^="/integrations/"]')).toHaveCount(0);
 });
