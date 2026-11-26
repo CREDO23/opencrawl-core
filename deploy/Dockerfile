@@ -1,8 +1,6 @@
 # Runtime image for the self-hosted stack in compose.yaml. Build context is the repository root.
 FROM node:24.22.2-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-ARG REVISION=development
-ENV REVISION=$REVISION
 ENV OPENCRAWL_FILES_ROOT=/data/shared-files
 WORKDIR /opencrawl
 COPY --chown=node:node package.json package-lock.json ./
@@ -26,4 +24,5 @@ COPY --chown=node:node LICENSE ./LICENSE
 RUN mkdir -p /data && chown node:node /data
 ARG OPENCRAWL_SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$OPENCRAWL_SOURCE_REVISION
+ENV REVISION=$OPENCRAWL_SOURCE_REVISION
 USER node
