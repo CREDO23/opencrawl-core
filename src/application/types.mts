@@ -15,6 +15,7 @@ export interface SourceCard {
   connectionPath?: string;
   otherConnections?: Array<{account: string; path: string}>;
   account?: string | null;
+  canAddAccount?: boolean;
   state: 'disconnected' | 'disconnecting' | 'connecting' | 'syncing' | 'synced' | 'connected' | 'error' | 'unavailable' | 'setup-required';
   setup?: SourceSetup;
   scope?: 'team' | 'user';

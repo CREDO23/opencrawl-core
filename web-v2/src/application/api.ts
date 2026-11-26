@@ -11,8 +11,8 @@ export interface SourcesAdapter {
   connection?(path:string,signal?:AbortSignal):Promise<SourceCard>;
   sources(signal?: AbortSignal): Promise<{items: SourceCard[]}>;
   connect(provider: string, apiKey?: string, signal?: AbortSignal): Promise<{ok?: boolean; redirectUrl?: string}>;
-  retry(provider: string, signal?: AbortSignal): Promise<{ok: true}>;
-  disconnect(provider: string, signal?: AbortSignal): Promise<{ok: true}>;
+  retry(provider: string, signal?: AbortSignal, integrationId?: string): Promise<{ok: true}>;
+  disconnect(provider: string, signal?: AbortSignal, integrationId?: string): Promise<{ok: true}>;
   /** Admin only: store an operator credential named by a source's setup. */
   saveCredential?(credential: string, value: string, signal?: AbortSignal): Promise<{ok: true}>;
 }
